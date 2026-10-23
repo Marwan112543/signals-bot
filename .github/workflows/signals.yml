@@ -2,12 +2,12 @@ name: Trading Signals
 
 on:
   schedule:
-    - cron: "1,16,31,46 * * * *"   # بعد إغلاق كل شمعة 15 دقيقة بدقيقة (GitHub قد يؤخره قليلاً)
-  workflow_dispatch:           # زر تشغيل يدوي من صفحة Actions
+    - cron: "7 * * * *"        # احتياطي فقط (GitHub يؤخره كثيراً) — التشغيل الأساسي من cron-job.org عند إغلاق كل شمعة
+  workflow_dispatch:           # يُستدعى من cron-job.org، أو يدوياً من صفحة Actions
     inputs:
       mode:
         description: "run = فحص عادي | test = رسالة تجربة بآخر إشارة لكل عملة"
-        default: "test"
+        default: "run"
         type: choice
         options: [test, run]
 
