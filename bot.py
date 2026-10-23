@@ -324,13 +324,16 @@ def loop():
     delay = 4  # ثوانٍ بعد الإغلاق حتى تثبت الشمعة عند Binance
 
     # فحص فوري عند البدء لالتقاط أي إشارة وقعت أثناء تسليم التشغيل
+    boundary = (int(time.time()) // step) * step  # آخر إغلاق شمعة شمله هذا الفحص
     run(lookback_min=30, exit_on_fail=False)
     git_save_state()
 
     while True:
-        now = time.time()
-        next_close = (int(now) // step + 1) * step + delay
-        time.sleep(max(0, next_close - now))
+        # الإغلاق التالي بعد آخر إغلاق تم فحصه — إذا فات وقته (الفحص السابق طال) نفحص فوراً
+        boundary += step
+        if time.time() - boundary > step:      # تأخرنا أكثر من شمعة كاملة → نقفز للإغلاق الحالي
+            boundary = (int(time.time()) // step) * step
+        time.sleep(max(0, boundary + delay - time.time()))
         try:
             run(lookback_min=30, exit_on_fail=False)
             git_save_state()
