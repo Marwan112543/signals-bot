@@ -261,11 +261,11 @@ def save_state(state):
 
 
 # ───────────────────────── التشغيل ─────────────────────────
-def run():
+def run(lookback_min=None, exit_on_fail=True):
     coins = load_coins()
     state = load_state()
     now_ms = int(time.time() * 1000)
-    window_start = now_ms - LOOKBACK_MIN * 60 * 1000
+    window_start = now_ms - (lookback_min or LOOKBACK_MIN) * 60 * 1000
     errors, sent = [], 0
 
     for symbol, candles in fetch_all(coins):
@@ -288,9 +288,57 @@ def run():
                     sent += 1
 
     save_state(state)
-    print(f"تم فحص {len(coins)} عملة — أُرسلت {sent} إشارة — أخطاء: {len(errors)}")
-    if errors and len(errors) == len(coins):
+    print(f"[{fmt_time(now_ms)}] تم فحص {len(coins)} عملة — أُرسلت {sent} إشارة — أخطاء: {len(errors)}", flush=True)
+    if exit_on_fail and errors and len(errors) == len(coins):
         sys.exit(1)  # كل العملات فشلت → يظهر التشغيل كفاشل في GitHub
+    return sent
+
+
+def git_save_state():
+    """يحفظ state.json في المستودع حتى يعرف التشغيل التالي ما أُرسل (يمنع التكرار)."""
+    import subprocess
+
+    def sh(*cmd):
+        return subprocess.run(cmd, capture_output=True, text=True)
+
+    if not sh("git", "status", "--porcelain", STATE_FILE).stdout.strip():
+        return
+    sh("git", "add", STATE_FILE)
+    sh("git", "commit", "-m", "update state [skip ci]")
+    for _ in range(3):
+        sh("git", "pull", "--rebase", "-X", "theirs")
+        if sh("git", "push").returncode == 0:
+            return
+        time.sleep(3)
+    print("[تحذير] تعذر حفظ state.json في GitHub")
+
+
+def loop():
+    """
+    يبقى شغالاً ويفحص لحظة إغلاق كل شمعة 15 دقيقة (+ بضع ثوانٍ).
+    يتوقف بعد LOOP_MAX_MIN دقيقة مباشرة بعد فحص، فيبدأ التشغيل التالي (المنتظر في الطابور) ويكمل.
+    """
+    started = time.time()
+    max_sec = int(os.environ.get("LOOP_MAX_MIN", "335")) * 60
+    step = 15 * 60
+    delay = 4  # ثوانٍ بعد الإغلاق حتى تثبت الشمعة عند Binance
+
+    # فحص فوري عند البدء لالتقاط أي إشارة وقعت أثناء تسليم التشغيل
+    run(lookback_min=30, exit_on_fail=False)
+    git_save_state()
+
+    while True:
+        now = time.time()
+        next_close = (int(now) // step + 1) * step + delay
+        time.sleep(max(0, next_close - now))
+        try:
+            run(lookback_min=30, exit_on_fail=False)
+            git_save_state()
+        except Exception as e:
+            print(f"[خطأ في الفحص] {e}", flush=True)
+        if time.time() - started > max_sec:
+            print("انتهت مدة هذا التشغيل — التشغيل التالي يكمل.")
+            return
 
 
 def fetch_all(coins):
@@ -336,7 +384,10 @@ def test():
 
 
 if __name__ == "__main__":
-    if os.environ.get("MODE", "run").strip().lower() == "test":
+    mode = os.environ.get("MODE", "run").strip().lower()
+    if mode == "test":
         test()
+    elif mode == "loop":
+        loop()
     else:
         run()
